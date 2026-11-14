@@ -1,6 +1,7 @@
 -- Time Stop (Local visual freeze, FE damage still applies)
 -- Toggle: press E
 -- Freezes all other players client-side; you keep moving and damaging.
+-- While active, your character becomes invisible to server & other clients (transparency replicates via network ownership), but hitboxes stay intact so damage still applies.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -11,6 +12,56 @@ local character = player.Character or player.CharacterAdded:Wait()
 
 local active = false
 local frozenChars = {}
+
+-- saved visual state for the local character so we can restore exactly
+local savedTransparency = {}
+local savedGuiEnabled = {}
+
+local function setLocalVisible(visible)
+    if not character then return end
+    if visible then
+        -- restore
+        for part, t in pairs(savedTransparency) do
+            if part and part.Parent then
+                part.Transparency = t
+            end
+        end
+        savedTransparency = {}
+        for gui, v in pairs(savedGuiEnabled) do
+            if gui and gui.Parent then
+                gui.Enabled = v
+            end
+        end
+        savedGuiEnabled = {}
+    else
+        -- hide: store originals, then make everything invisible
+        savedTransparency = {}
+        savedGuiEnabled = {}
+        for _, obj in ipairs(character:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                savedTransparency[obj] = obj.Transparency
+                obj.Transparency = 1
+                obj.CastShadow = false
+            elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                savedTransparency[obj] = obj.Transparency
+                obj.Transparency = 1
+            elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
+                savedGuiEnabled[obj] = obj.Enabled
+                obj.Enabled = false
+            end
+        end
+        -- top-level character parts (in case GetDescendants misses direct)
+        for _, obj in ipairs(character:GetChildren()) do
+            if obj:IsA("BasePart") then
+                if savedTransparency[obj] == nil then
+                    savedTransparency[obj] = obj.Transparency
+                end
+                obj.Transparency = 1
+                obj.CastShadow = false
+            end
+        end
+    end
+end
 
 local function freezeChar(char)
     if not char or char == character then return end
@@ -76,8 +127,10 @@ local function toggle()
     active = not active
     if active then
         freezeAll()
+        setLocalVisible(false)
     else
         unfreezeAll()
+        setLocalVisible(true)
     end
 end
 
@@ -141,6 +194,21 @@ RunService.Heartbeat:Connect(function()
             end
         end
     end
+    -- keep local character hidden (transparency may be reset by engine/respawn)
+    if character and character.Parent then
+        for _, obj in ipairs(character:GetDescendants()) do
+            if obj:IsA("BasePart") or obj:IsA("Decal") or obj:IsA("Texture") then
+                if obj.Transparency ~= 1 then
+                    obj.Transparency = 1
+                end
+                if obj:IsA("BasePart") then
+                    obj.CastShadow = false
+                end
+            elseif (obj:IsA("BillboardGui") or obj:IsA("SurfaceGui")) and obj.Enabled then
+                obj.Enabled = false
+            end
+        end
+    end
 end)
 
 -- Cleanup on character respawn of local player
@@ -149,5 +217,6 @@ player.CharacterAdded:Connect(function(newChar)
     if active then
         active = false
         unfreezeAll()
+        setLocalVisible(true)
     end
 end)
